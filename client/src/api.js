@@ -1,5 +1,5 @@
 // Talks to the Node server. The login token is kept in the browser (localStorage).
-const BASE = 'https://quality-scoreboard-react-ufhq-2x4s4osu0-rathnayakenethmi82-3678.vercel.app/';
+const BASE = 'api/';
 
 export const getToken = () => localStorage.getItem('qs_token');
 export const setToken = (t) => (t ? localStorage.setItem('qs_token', t) : localStorage.removeItem('qs_token'));
