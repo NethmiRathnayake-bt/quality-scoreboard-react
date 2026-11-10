@@ -61,3 +61,27 @@ client/src/App.jsx           page addresses (routes)
 client/src/pages/            one file per page
 client/src/components/       sidebar layout and the SVG charts
 client/src/api.js            how React calls the API
+
+## 5. Putting it online (so it works when your laptop is off)
+The server needs these settings (Environment Variables on the hosting site, or server/.env):
+
+    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME   from your online MySQL database
+    DB_SSL=true                                       if the online database needs an encrypted connection
+    JWT_SECRET                                        a long random text (never keep the default)
+    PORT                                              the hosting site sets this itself
+
+Build command : cd client && npm install && npm run build && cd ../server && npm install
+Start command : cd server && npm start
+
+The Node server serves the React app too, so ONE web service is enough.
+
+## 6. Putting it on Vercel (frontend + API together, from GitHub)
+The project already contains what Vercel needs: api/index.js, vercel.json and the root package.json.
+1. Push the whole folder to a GitHub repository (do not upload server/.env).
+2. vercel.com -> Add New -> Project -> import the repository. Leave "Root Directory" as the repository root.
+3. Framework Preset: Other. (vercel.json sets "framework": null, which means Other, plus the build command and the output folder.)
+   If you see "Cannot GET /" the project was treated as an Express app: set Framework Preset to Other in Settings > Build and Deployment, then Redeploy.
+4. Environment Variables: DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_SSL=true, JWT_SECRET
+5. Deploy. Vercel gives you a link such as https://your-project.vercel.app
+
+You still need a MySQL database that is online (for example TiDB Cloud). Vercel does not host MySQL.

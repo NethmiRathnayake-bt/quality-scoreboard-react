@@ -139,43 +139,50 @@ router.post('/sheet', staff, wrap(async (req, res) => {
   }
   if (errors.length) return res.status(400).json({ errors });
 
+  if (!cells.length) return res.status(400).json({ errors: ['This area has no active cells.'] });
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    let [[audit]] = await conn.query('SELECT id FROM audits WHERE audit_date = ? AND area_id = ?', [date, areaId]);
+    const [[audit]] = await conn.query('SELECT id FROM audits WHERE audit_date = ? AND area_id = ?', [date, areaId]);
     let auditId = audit?.id;
     if (!auditId) {
       const [ins] = await conn.query('INSERT INTO audits (audit_date, area_id, auditor_id) VALUES (?,?,?)', [date, areaId, req.user.id]);
       auditId = ins.insertId;
     }
 
-    // find a leader / employee by number, or create it
-    const idFor = async (table, num) => {
-      const [[row]] = await conn.query(`SELECT id FROM ${table} WHERE employee_number = ?`, [num]);
-      if (row) return row.id;
-      const [ins] = await conn.query(`INSERT INTO ${table} (employee_number) VALUES (?)`, [num]);
-      return ins.insertId;
+    // create any new leader / employee numbers in one go, then look their ids up
+    const idMap = async (table, nums) => {
+      if (!nums.length) return {};
+      await conn.query(`INSERT IGNORE INTO ${table} (employee_number) VALUES ?`, [nums.map((n) => [n])]);
+      const [rows] = await conn.query(`SELECT id, employee_number FROM ${table} WHERE employee_number IN (?)`, [nums]);
+      return Object.fromEntries(rows.map((r) => [r.employee_number, r.id]));
     };
+    const leaderIds = await idMap('leaders', [...new Set(cells.map((c) => clean[c.id].leader).filter(Boolean))]);
+    const empIds = await idMap('employees', [...new Set(cells.flatMap((c) => clean[c.id].emps))]);
 
-    for (const c of cells) {
-      const d = clean[c.id];
-      const leaderId = d.leader ? await idFor('leaders', d.leader) : null;
+    // leader + remarks of every cell (one query)
+    await conn.query(
+      `INSERT INTO audit_cells (audit_id, cell_id, leader_id, remarks) VALUES ?
+       ON DUPLICATE KEY UPDATE leader_id = VALUES(leader_id), remarks = VALUES(remarks)`,
+      [cells.map((c) => [auditId, c.id, clean[c.id].leader ? leaderIds[clean[c.id].leader] : null, clean[c.id].remarks || null])]);
+
+    // every mark in the grid (one query)
+    const scoreRows = [];
+    for (const c of cells) for (const cr of criteria) scoreRows.push([auditId, c.id, cr.id, clean[c.id].marks[cr.id]]);
+    if (scoreRows.length) {
       await conn.query(
-        `INSERT INTO audit_cells (audit_id, cell_id, leader_id, remarks) VALUES (?,?,?,?)
-         ON DUPLICATE KEY UPDATE leader_id = VALUES(leader_id), remarks = VALUES(remarks)`,
-        [auditId, c.id, leaderId, d.remarks || null]);
-      for (const cr of criteria) {
-        await conn.query(
-          `INSERT INTO audit_scores (audit_id, cell_id, criterion_id, marks) VALUES (?,?,?,?)
-           ON DUPLICATE KEY UPDATE marks = VALUES(marks)`,
-          [auditId, c.id, cr.id, d.marks[cr.id]]);
-      }
-      await conn.query('DELETE FROM audit_cell_employees WHERE audit_id = ? AND cell_id = ?', [auditId, c.id]);
-      for (const num of d.emps) {
-        const empId = await idFor('employees', num);
-        await conn.query('INSERT IGNORE INTO audit_cell_employees (audit_id, cell_id, employee_id) VALUES (?,?,?)', [auditId, c.id, empId]);
-      }
+        `INSERT INTO audit_scores (audit_id, cell_id, criterion_id, marks) VALUES ?
+         ON DUPLICATE KEY UPDATE marks = VALUES(marks)`, [scoreRows]);
     }
+
+    // employees of the day: replace the old lists with the new ones
+    await conn.query('DELETE FROM audit_cell_employees WHERE audit_id = ? AND cell_id IN (?)', [auditId, cells.map((c) => c.id)]);
+    const links = cells.flatMap((c) => clean[c.id].emps.map((n) => [auditId, c.id, empIds[n]]));
+    if (links.length) {
+      await conn.query('INSERT IGNORE INTO audit_cell_employees (audit_id, cell_id, employee_id) VALUES ?', [links]);
+    }
+
     await conn.commit();
     res.json({ ok: true });
   } catch (e) {
