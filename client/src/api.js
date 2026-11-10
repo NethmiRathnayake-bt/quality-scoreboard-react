@@ -1,5 +1,5 @@
 // Talks to the Node server. The login token is kept in the browser (localStorage).
-const BASE = 'api/';
+const BASE = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/` :'api/';
 
 export const getToken = () => localStorage.getItem('qs_token');
 export const setToken = (t) => (t ? localStorage.setItem('qs_token', t) : localStorage.removeItem('qs_token'));
